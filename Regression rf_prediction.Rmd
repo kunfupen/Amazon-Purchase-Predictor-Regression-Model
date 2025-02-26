@@ -1,0 +1,78 @@
+---
+title: "Stats 101C rf_prediction"
+author: "Khang Thai"
+date: "2024-07-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(readr)
+library(dplyr)
+library(knitr)
+
+```
+
+```{r}
+train <- read.csv("train.csv")
+
+train <- select(train, -order_totals)
+```
+
+```{r}
+set.seed(123)
+split <- vfold_cv(train, v = 10, strata = log_total)
+split
+```
+
+```{r}
+data_recipe <- recipe(log_total ~., data = train) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_factor_predictors())
+
+rf_model <- rand_forest() %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+train_wf <- workflow() %>%
+  add_recipe(data_recipe) %>%
+  add_model(rf_model)
+
+train_wf_fit <- train_wf %>%
+  fit(data = train)
+
+train_wf_fit
+```
+
+```{r}
+train_wf_fit_resamples <- train_wf %>%
+  fit_resamples(resamples = split, metrics = metric_set(rmse, rsq), control = control_resamples(save_pred = TRUE))
+
+train_wf_fit_resamples
+
+```
+
+```{r}
+metrics <- collect_metrics(train_wf_fit_resamples)
+metrics
+```
+
+```{r}
+test <- read.csv("test.csv")
+
+prediction <- predict(train_wf_fit, new_data = test)
+
+test_predict <- bind_cols(test, prediction) %>%
+  select(id, predicted_values = .pred)
+
+head(test_predict, 15)
+```
+
+```{r}
+write_csv(test_predict, "predictions2.csv")
+```

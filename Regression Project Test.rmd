@@ -1,0 +1,124 @@
+---
+title: "Stats 101C Project Test"
+author: "Khang Thai"
+date: "2024-07-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(readr)
+library(dplyr)
+library(knitr)
+library(kknn)
+```
+
+```{r}
+train <- read.csv("train.csv")
+train <- select(train, -order_totals)
+
+```
+
+```{r}
+set.seed(123)
+split <- vfold_cv(train, v = 10, strata = log_total)
+split
+
+```
+
+```{r}
+knn_model <- nearest_neighbor() %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+```
+
+```{r}
+train_wf <- workflow() %>%
+  add_formula(log_total ~.)
+
+train_wf <- train_wf %>%
+  add_model(knn_model) 
+
+
+train_wf
+
+
+```
+
+```{r}
+tune_grid <- grid_regular(
+  neighbors(range = c(3, 20)),
+  weight_func(c("rectangular", "triangular", "epanechnikov", "biweight", "triweight")),
+  dist_power(range = c(1, 2)),
+  levels = 5
+)
+
+knn_tune_results <- tune_grid(
+  train_wf,
+  resamples = split,
+  grid = tune_grid,
+  metrics = metric_set(rmse, rsq)
+)
+```
+
+```{r}
+best_params <- select_best(knn_tune_results, metric = "rmse")
+final_knn_model <- finalize_model(knn_model, best_params)
+
+best_params
+```
+
+```{r}
+knn_workflow <- workflow() %>%
+  add_formula(log_total ~.) %>%
+  add_model(final_knn_model)
+
+knn_workflow_fit <- knn_workflow %>%
+  fit(data = train)
+
+knn_workflow_fit
+
+```
+
+
+```{r}
+test <- read.csv("test.csv")
+
+# Assuming the columns 'year', 'month', and any other similar columns need to be integers
+
+# Convert specific columns to integer after any transformations
+train <- train %>%
+  mutate(year = as.integer(year),
+         month = as.integer(month))
+
+test <- test %>%
+  mutate(year = as.integer(year),
+         month = as.integer(month))
+
+# Check and convert data types after scaling or other transformations
+numeric_columns <- c("year", "month") # Add any other columns as needed
+
+train[numeric_columns] <- lapply(train[numeric_columns], as.integer)
+test[numeric_columns] <- lapply(test[numeric_columns], as.integer)
+
+```
+
+```{r}
+prediction <- predict(knn_workflow_fit, new_data = test)
+
+test_predict <- bind_cols(test, prediction) %>%
+  select(id, predicted_values = .pred)
+
+head(test_predict, 15)
+```
+
+```{r}
+write_csv(test_predict, "knn_predictions.csv")
+
+```

@@ -1,0 +1,110 @@
+---
+title: "Stats 101C Project Test"
+author: "Khang Thai"
+date: "2024-07-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(readr)
+library(dplyr)
+library(knitr)
+library(kknn)
+```
+
+```{r}
+train <- read.csv("train.csv")
+train <- select(train, -order_totals)
+
+train <- train %>%
+  mutate(across(where(is.numeric), ~ scale(.) %>% as.vector())) %>%
+  mutate(across(where(is.factor), as.numeric))
+```
+
+```{r}
+set.seed(123)
+split <- vfold_cv(train, v = 10, strata = log_total)
+split
+
+```
+
+```{r}
+data_recipe <- recipe(log_total ~., data = train) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_interact(terms = ~ year:month) %>%
+  step_pca(all_numeric_predictors(), threshold = 0.9)
+
+data_recipe_prep <- prep(data_recipe, training = train)
+
+knn_model <- nearest_neighbor() %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+```
+
+```{r}
+train_wf <- workflow() %>%
+  add_recipe(data_recipe) %>%
+  add_model(knn_model) 
+
+tune_grid <- grid_regular(
+  neighbors(range = c(5, 100)),
+  weight_func(c("rectangular", "triangular", "epanechnikov")),
+  dist_power(range = c(1, 2)),
+  levels = 20
+)
+
+set.seed(123)
+knn_tune_results <- tune_grid(
+  train_wf,
+  resamples = split,
+  grid = tune_grid,
+  metrics = metric_set(rmse, rsq)
+)
+```
+
+```{r}
+best_params <- select_best(knn_tune_results, metric = "rmse")
+final_knn_model <- finalize_model(knn_model, best_params)
+
+knn_workflow <- workflow() %>%
+  add_recipe(data_recipe) %>%
+  add_model(final_knn_model)
+
+knn_workflow_fit <- knn_workflow %>%
+  fit(data = train)
+
+knn_workflow_fit
+
+```
+
+
+```{r}
+test <- read.csv("test.csv")
+
+common_cols <- setdiff(names(train), "log_total")
+test <- test %>%
+  select(all_of(common_cols))
+
+test <- bake(data_recipe_prep, new_data = test)
+
+prediction <- predict(knn_workflow_fit, new_data = test)
+
+test_predict <- bind_cols(test, prediction) %>%
+  mutate(id = row_number()) %>%
+  select(id, predicted_values = .pred)
+  
+  
+head(test_predict, 15)
+```
+
+```{r}
+write_csv(test_predict, "knn_predictions.csv")
+
+```
