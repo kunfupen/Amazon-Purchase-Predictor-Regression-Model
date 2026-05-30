@@ -1,0 +1,4 @@
+*.Rmd text
+*.md text
+*.csv linguist-generated=false
+*.pdf linguist-documentation
